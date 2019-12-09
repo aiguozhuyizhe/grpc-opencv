@@ -1,0 +1,16 @@
+import grpc
+from  example import  helloworld_pb2,helloworld_pb2_grpc
+import os
+_HOST = "192.168.96.131"
+_PORT = "50051"
+
+
+def run():
+    channel = grpc.insecure_channel('192.168.96.131:50051')
+    stub = helloworld_pb2_grpc.GreeterStub(channel)
+    response = stub.SayHello(helloworld_pb2.HelloRequest(name=" "))
+    print(response.message)
+
+
+if __name__ == '__main__':
+    run()
