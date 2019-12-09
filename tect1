@@ -1,0 +1,374 @@
+# -*- coding: utf-8 -*-
+
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+from __future__ import unicode_literals
+import  base64
+import cv2
+import glob
+import logging
+import os
+import  pickle
+from caffe2.python import workspace
+
+from detectron.core.config import assert_and_infer_cfg
+from detectron.core.config import cfg
+from detectron.core.config import merge_cfg_from_file
+from detectron.utils.io import cache_url
+import detectron.core.test_engine as infer_engine
+import detectron.datasets.dummy_datasets as dummy_datasets
+import detectron.utils.c2 as c2_utils
+import detectron.utils.vis as vis_utils
+import  numpy as np
+from PIL import  Image
+import detectron.utils.vis  as vis
+import  grpc
+import helloworld_pb2,helloworld_pb2_grpc
+import time
+import  datetime
+from concurrent import  futures
+import  os
+from influxdb import  *
+import  json
+import  redis
+import  pymysql
+_ONE_DAY_IN_SECONDS = 60 * 60 * 24
+
+
+c2_utils.import_detectron_ops()
+
+cv2.ocl.setUseOpenCL(False)
+
+my_cfg = '/home/xiaoj/detectron/configs/12_2017_baselines/e2e_mask_rcnn_R-101-FPN_2x.yaml'  #模型配置文件
+weights = '/home/xiaoj/detectron/model_final.pkl'  # 模型
+output_dir = '/home/xiaoj/detectron/out'  # 输出图片的位置
+image_ext = 'jpg'  # 检测的文件格式
+output_ext = 'jpg' # 输出的文件格式
+im_or_folder = '/home/xiaoj/detectron/tupian' # 检测的图片位置
+out_when_no_box = True # 无检测结果依然输出
+#####################################获取原图##############3
+import cv2
+import  time
+camera_list =[[1,'rtsp://admin:abc12345@192.168.95.246/h264/ch1/main/av_stream'],
+              [2, 'rtsp://admin:abc12345@192.168.95.245/h264/ch1/main/av_stream'],
+              [3, 'rtsp://admin:abc12345@192.168.95.244/h264/ch1/main/av_stream'],
+              [4, 'rtsp://admin:abc12345@192.168.95.242/h264/ch1/main/av_stream']]
+
+while camera_list:
+    for c_l in camera_list:
+        camera_url = c_l[1]
+        print(camera_url)
+        camera_id = c_l[0]
+        print(camera_id)
+
+        vc = cv2.VideoCapture(camera_url)  # 读入视频文件
+        print(vc)
+        c = 1
+
+        n = 1
+        if vc.isOpened():  # 判断是否正常打开
+            rval, frame = vc.read()
+            #timeF = 1 # 视频帧计数间隔频率
+
+            start = time.time()
+            #print(start)
+              # 循环读取视频帧
+            #if rval ==True:
+            #rval, frame = vc.read()
+
+            #print("**********************")
+            #cv2.imshow("capture", frame)
+            #print(frame)
+            now = datetime.datetime.now()
+            #print(int(start - end))
+
+            #if (c % timeF == 0):  # 每隔timeF帧进行存储操作
+
+
+                #cv2.imwrite('/home/xiaoj/detectron/tupian/' + str(c) + '.jpg', frame)  # 存储为图像
+                ################detectron检测################
+                # font = cv2.FONT_HERSHEY_SIMPLEX # 设定字体
+                # tag = 1  # 是否写入警告
+                # region = [0,0,0,0,0] # 划定识别区域和置信度
+
+            workspace.GlobalInit(['caffe2', '--caffe2_log_level=0'])
+
+            merge_cfg_from_file(my_cfg)
+            #cfg.NUM_GPUS = 1
+            weights = cache_url(weights, cfg.DOWNLOAD_CACHE)
+            assert_and_infer_cfg(cache_urls=False)
+
+            model = infer_engine.initialize_model_from_cfg(weights)
+            dummy_coco_dataset = dummy_datasets.get_coco_dataset()
+
+            # 获取指定目录下所有图片
+            #if os.path.isdir(im_or_folder):
+               # im_list = glob.iglob(im_or_folder + '/*.' + image_ext)
+            #else:
+                #im_list = [im_or_folder]
+
+            #for i, im_name in enumerate(im_list):
+                #out_name = os.path.join(
+                    #output_dir,
+                    #'{}'.format(os.path.basename(im_name) + '.' + output_ext))
+
+            #im = cv2.imread(frame)
+
+            # 遍历检测获取的图片
+            with c2_utils.NamedCudaScope(0):
+                cls_boxes, cls_segms, cls_keyps = infer_engine.im_detect_all(
+                    model, frame, None)
+            '''
+            # 设定检测区域
+            if(len(cls_boxes[1])!=0 and len(cls_boxes[2])!=0):
+
+                print('...........................................................')
+                print('worker：')
+                print(cls_boxes[1])
+                print('gloves：')
+                print(cls_boxes[2])
+                tag = 0
+            '''
+
+            # 裁剪图片并保存
+            # t1 = time.time()
+            # print(vis.get_class_string())
+            # print("********************")
+            # print(dummy_coco_dataset)
+
+            # print(im_name)
+            # print(cls_boxes)
+
+            # print(cls_boxes[2])
+            box_list = [b for b in cls_boxes if len(b) > 0]
+            if len(box_list) > 0:
+                boxes = np.concatenate(box_list)
+            else:
+                boxes = None
+            classes = []
+            for j in range(len(cls_boxes)):
+                # print(len(cls_boxes))
+
+                classes += [j] * len(cls_boxes[j])
+
+            if boxes is None:
+                sorted_inds = []  # avoid crash when 'boxes' is None
+            else:
+                # Display in largest to smallest order to reduce occlusion
+                areas = (boxes[:, 2] - boxes[:, 0]) * (boxes[:, 3] - boxes[:, 1])
+                sorted_inds = np.argsort(-areas)
+            mask_color_id = 0
+            b_list = []
+            for m in sorted_inds:
+
+
+                bbox = boxes[m, :4]
+
+                # score = boxes[i, -1]
+                # if score < thresh:
+                # continue
+                score = boxes[m, -1]
+                if score < 0.9:
+                    continue
+                x0 = int(bbox[0])
+
+                y0 = int(bbox[1])
+                x1 = int(bbox[2])
+                y1 = int(bbox[3])
+
+                # classes = vis.convert_from_cls_format(classes)
+                # 标签判断
+                # print(j)
+                # biao_qian = vis.get_class_string(classes[m],score,dummy_coco_dataset)
+                # print(biao_qian)
+
+                class_str = vis.get_class_string(classes[m], score, dummy_coco_dataset)
+                # im = vis.vis_class(im, (bbox[0], bbox[1] - 2), class_str)
+                # print(class_str)
+                biao_qian = class_str.split(" ")[0]
+                list = []
+                list.append(biao_qian)
+
+                # print(list)
+                #print(type(bbox))
+
+                for p in list:
+                    if p == "person":
+
+                        # print(biao_qian)
+                        # for p in biao_qian:
+                        # print(p)
+                        # print("************")
+                        # if p == "person":
+                        b = [x0,y0,x1,y1]
+
+
+                        #print(b)
+                        b_list.append(b)
+                       # print(len(b_list))
+                        print(b_list)
+                        img = frame
+                        #print(type(img))
+                        #############################将原图相关存入inlfux数据库中######################
+                        width = img.shape[1]
+                        height = img.shape[0]
+                        image = cv2.imencode('.jpg', img)[1]
+                        b_64 =str(base64.b64encode(image))[2:-1]
+
+
+                        #print(bbox)
+                        #print(type(bbox))
+                        person_list = json.dumps(b_list)
+                        #print("__________________")
+                        #print(person_list)
+                        #print("**************************")
+                        #print(person_list)
+                        client = InfluxDBClient('localhost', 8086, 'root', 'root', 'mvas')
+
+                        timestamp = int(now.timestamp() * 1000000)
+                        #print('获取时间戳：{}'.format(timestamp))
+                        json_data = [
+                            {
+                                "measurement": "frame",
+
+                                "time": timestamp,
+                                "fields": {
+                                        "base64":b_64,"width":width,"height":height,"person_list":person_list,"camera_id":camera_id
+                                }
+                            }
+                        ]
+
+                        client.write_points(json_data)
+                        print("finish influx")
+                        #result = client.query('select * from frame;')
+
+                        #print(result[1])
+
+
+
+
+
+
+                        ###############################裁剪并存储到本地#########################################
+                        #print(bbox)
+                        cropped = img[y0:y1, x0:x1]
+
+                        #print(type(cropped))
+                        #print(cropped)
+                       # st = str(x0) + ".jpg"
+                        #print(st)
+                        #cv2.imwrite("/home/xiaoj/detectron/cj/" + st , cropped)
+                        #print()
+                        ######################将人物识别后的图像存入redis数据库##############################
+
+                        image_caijian = cv2.imencode('.jpg', cropped)[1]
+                        #print(type(image_caijian))
+                        st = str(x0) + ".jpg"
+                        # print(st)
+                        cv2.imwrite("/home/xiaoj/detectron/cj/" + st , image_caijian)
+                        print(type(image_caijian))
+                        b_64_caijian = (base64.b64encode(image_caijian))[2:-1]
+
+                        #b_64_caijian =
+                        #####时间戳操作###################
+                        time1_str = datetime.datetime.now().strftime('%Y')
+                        yea1 = str(time1_str[2] + time1_str[3])
+                        M_D = yea1 + datetime.datetime.now().strftime('%m%d%H%M%S')
+                        reid_time = str("2") + "_" + M_D + str(c)
+                        ####
+                       # c_time = M_D + str(c)
+
+
+                        try:
+
+                            r = redis.Redis(host='localhost', port=6379, db=0, password='redis')
+                            keys = r.keys()
+                            v = {
+
+                                "c_n": "摄像头2",
+                                "t": timestamp,
+                                "b64s": [b_64_caijian]
+                            }
+                            # v_1 = json.dumps(v)
+                            # print(v_1)
+                            v_1 = json.dumps(v)
+                            # print(v_1)
+                            r.set(reid_time, v_1)
+                            # r.setex(1_1801011212121,v_1,2)
+                            # print(r.get('f_id'))
+                            #with r.pipeline(transaction=False) as pipe:
+                               # for data in keys:
+                                    #pipe.get(data)
+
+                               # result = pipe.execute()
+                                #for my_img in result:
+                                   # img = pickle.loads(my_img)
+
+                            # for i in range(2000):
+                            #    filename = keys[i]
+                            #    my_img = r.get(filename)
+                            #    s = pickle.loads(my_img)
+                            # io.imsave(filename, s)
+
+                        except Exception as e:
+
+                            print(e)
+
+
+                        ##################################################################################
+                    ##else:
+                        #print("++++++++++++++")
+                       # print("not a person")
+                        #print("???????????????????/")
+            c = c + 1
+            if c % 80 == 0:
+
+                pc_mem = psutil.virtual_memory()
+
+                div_gb_factor = (1024.0 ** 2)
+                t = datetime.datetime.now()
+                mem = float(pc_mem.used / div_gb_factor)
+                data = [
+                    (t, mem)
+                ]
+                with open("info.csv", 'a', newline="") as f:
+                    csv_write = csv.writer(f)
+                    for list in data:
+                        csv_write.writerow(list)
+            #if cv2.waitKey(50) & 0xff == ord('q'):
+               #break
+        #cv2.imwrite('/home/xiaoj/detectron/tupian/' + str(c) + '.jpg', frame)
+        #vc.release()
+        #cv2.destroyAllWindows()
+        #end = time.time()
+        #print(end)
+    else:
+        rval = False
+
+
+'''
+            vis_utils.vis_one_image(
+                img[:, :, ::-1],  # BGR -> RGB for visualization
+                im_name,
+                output_dir,
+                cls_boxes,
+                cls_segms,
+            cls_keyps,
+                dataset=dummy_coco_dataset,
+                box_alpha=0.3,
+                show_class=True,
+                thresh=0.7,
+                kp_thresh=2,
+                ext=output_ext,
+                out_when_no_box=out_when_no_box)
+'''
+
+
+
+
+
+
+
+
+
